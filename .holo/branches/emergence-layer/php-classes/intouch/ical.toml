@@ -1,0 +1,4 @@
+[holomapping]
+holosource = "intouch-ical"
+root = "intouch/ical"
+files = "**/*.php"
