@@ -3,94 +3,170 @@
 namespace Emergence\Events;
 
 use HandleBehavior;
+use Emergence\Comments\Comment;
 
-class Event extends \ActiveRecord
+
+class Event extends \VersionedRecord
 {
-    // support subclassing
-    public static $rootClass = __CLASS__;
-    public static $defaultClass = __CLASS__;
-    public static $subClasses = [__CLASS__];
+    // ActiveRecord configuration
+    public static $tableName = 'events'; // the name of this model's table
     public static $collectionRoute = '/events';
 
-    // ActiveRecord configuration
-    public static $tableName = 'events';
-    public static $singularNoun = 'event';
-    public static $pluralNoun = 'events';
+    // controllers will use these values to figure out what templates to use
+    public static $singularNoun = 'event'; // a singular noun for this model's object
+    public static $pluralNoun = 'events'; // a plural noun for this model's object
 
     public static $fields = [
+        'Title',
         'Handle' => [
             'unique' => true
-        ]
-        ,'Title'
-        ,'Status' => [
-            'type' => 'enum'
-            ,'values' => ['Hidden','Published', 'Deleted']
-            ,'default' => 'Published'
-        ]
-        ,'StartTime' => [
-            'type' => 'timestamp'
-            ,'default' => null
-        ]
-        ,'EndTime' => [
-            'type' => 'timestamp'
-            ,'default' => null
-        ]
-        ,'Location' => [
-            'type' => 'string'
-            ,'notnull' => false
-        ]
-        ,'Description' => [
-            'type' => 'clob'
-            ,'notnull' => false
+        ],
+        'Status' => [
+            'type' => 'enum',
+            'values' => ['draft', 'published', 'deleted'],
+            'default' => 'published'
+        ],
+        'StartTime' => [
+            'type' => 'datetime'
+        ],
+        'EndTime' => [
+            'type' => 'datetime',
+            'default' => null
+        ],
+        'LocationName' => [
+            'type' => 'string',
+            'default' => null
+        ],
+        'LocationAddress' => [
+            'type' => 'string',
+            'default' => null
+        ],
+        'Description' => [
+            'type' => 'clob',
+            'default' => null
         ]
     ];
 
     public static $relationships = [
         'Comments' => [
-            'type' => 'context-children'
-            ,'class' => 'Comment'
-            ,'order' => ['ID' => 'DESC']
+            'type' => 'context-children',
+            'class' => Comment::class,
+            'order' => ['ID' => 'DESC']
+        ],
+        'Segments' => [
+            'type' => 'one-many',
+            'class' => EventSegment::class,
+            'order' => 'StartTime, EndTime IS NOT NULL, EndTime DESC'
         ]
     ];
 
     public static $searchConditions = [
         'Title' => [
-            'qualifiers' => ['any', 'title']
-            ,'points' => 3
-            ,'sql' => 'Title Like "%%%s%%"'
-        ]
-        ,'Handle' => [
-            'qualifiers' => ['any', 'handle']
-            ,'points' => 3
-            ,'sql' => 'Handle Like "%%%s%%"'
-        ]
-        ,'Description' => [
-            'qualifiers' => ['any', 'description']
-            ,'points' => 1
-            ,'sql' => 'Description Like "%%%s%%"'
-        ]
-        ,'Location' => [
-            'qualifiers' => ['any', 'location']
-            ,'points' => 2
-            ,'sql' => 'Location Like "%%%s%%"'
+            'qualifiers' => ['any', 'title'],
+            'points' => 3,
+            'sql' => 'Title Like "%%%s%%"'
+        ],
+        'Handle' => [
+            'qualifiers' => ['any', 'handle'],
+            'points' => 3,
+            'sql' => 'Handle Like "%%%s%%"'
+        ],
+        'Description' => [
+            'qualifiers' => ['any', 'description'],
+            'points' => 1,
+            'sql' => 'Description Like "%%%s%%"'
+        ],
+        'Location' => [
+            'qualifiers' => ['any', 'location'],
+            'points' => 2,
+            'sql' => 'Location Like "%%%s%%"'
         ]
     ];
 
+    public static $dynamicFields = [
+        'IsAllDay' => [ 'getter' => 'getIsAllDay' ],
+        'IsMultiDay' => [ 'getter' => 'getIsMultiDay' ]
+    ];
+
+    public static $validators = [
+        'Title' => [
+            'errorMessage' => 'Event title is required'
+        ],
+        'StartTime' => [
+            'validator' => 'datetime',
+            'errorMessage' => 'Event start time is required'
+        ]
+        // TODO: validate that EndTime > StartTime if set
+    ];
+
+
+    public function getSegmentByHandle($handle)
+    {
+        return EventSegment::getByWhere([
+            'EventID' => $this->ID,
+            'Handle' => $handle
+        ]);
+    }
+
+    public function getIsAllDay()
+    {
+        $start = getdate($this->StartTime);
+        $end = getdate($this->EndTime);
+
+        return !$start['hours'] && !$start['minutes'] && !$start['seconds'] && !$end['hours'] && !$end['minutes'] && !$end['seconds'];
+    }
+
+    public function getIsMultiDay()
+    {
+        return $this->EndTime - $this->StartTime > 86400;
+    }
 
     public static function getUpcoming($options = [], $conditions = [])
     {
         $conditions[] = 'EndTime >= CURRENT_TIMESTAMP';
-        $conditions['Status'] = 'Published';
+        $conditions['Status'] = 'published';
 
         $options = array_merge([
-            'limit' => is_numeric($options) ? $options : 10
-            ,'order' => 'StartTime'
+            'limit' => is_numeric($options) ? $options : 10,
+            'order' => 'StartTime'
         ], is_array($options) ? $options : []);
 
         return static::getAllByWhere($conditions, $options);
     }
 
-    public static function groupEventsByDate($events)
+    public static function getUntil($when, $options = [], $conditions = [])
+    {
+        $conditions[] = 'EndTime >= CURRENT_TIMESTAMP';
+        $conditions[] = 'StartTime <= FROM_UNIXTIME('.strtotime($when).')';
+        $conditions['Status'] = 'published';
+
+        $options = array_merge([
+            'order' => 'StartTime'
+        ], is_array($options) ? $options : []);
+
+        return static::getAllByWhere($conditions, $options);
+    }
+
+    public function validate($deep = true)
+    {
+        // call parent
+        parent::validate();
+
+        HandleBehavior::onValidate($this, $this->_validator);
+
+        // save results
+        return $this->finishValidation();
+    }
+
+    public function save($deep = true)
+    {
+        HandleBehavior::onSave($this);
+
+        // call parent
+        parent::save();
+    }
+
+    public static function groupEventsByDate(array $events)
     {
         $dateFormat = 'Y-m-d';
         $timeFormat = 'Y-m-d H:i:s';
@@ -122,70 +198,5 @@ class Event extends \ActiveRecord
         }
 
         return $dates;
-    }
-
-    public static function getUntil($when, $options = [], $conditions = [])
-    {
-        $conditions[] = 'EndTime >= CURRENT_TIMESTAMP';
-        $conditions[] = 'StartTime <= FROM_UNIXTIME('.strtotime($when).')';
-        $conditions['Status'] = 'Published';
-
-        $options = array_merge([
-            'order' => 'StartTime'
-        ], is_array($options) ? $options : []);
-
-        return static::getAllByWhere($conditions, $options);
-    }
-
-    public function validate($deep = true)
-    {
-        // call parent
-        parent::validate();
-
-        $this->_validator->validate([
-            'field' => 'Title'
-            ,'errorMessage' => 'Please enter the title of the event'
-        ]);
-
-        $this->_validator->validate([
-            'field' => 'StartTime'
-            ,'validator' => 'datetime'
-            ,'errorMessage' => 'Please provide the start time for the event'
-        ]);
-
-        $this->_validator->validate([
-            'field' => 'Description'
-            ,'validator' => 'string_multiline'
-            ,'required' => false
-            ,'errorMessage' => 'Please provide a description for the event'
-        ]);
-
-        HandleBehavior::onValidate($this, $this->_validator);
-
-        // save results
-        return $this->finishValidation();
-    }
-
-    public function save($deep = true)
-    {
-        HandleBehavior::onSave($this);
-
-        // call parent
-        parent::save();
-    }
-
-    public function getValue($name)
-    {
-        switch ($name) {
-            case 'isAllDay':
-                $start = getdate($this->StartTime);
-                $end = getdate($this->EndTime);
-
-                return !$start['hours'] && !$start['minutes'] && !$start['seconds'] && !$end['hours'] && !$end['minutes'] && !$end['seconds'];
-            case 'isMultiDay':
-                return $this->EndTime - $this->StartTime > 86400;
-            default:
-                return parent::getValue($name);
-        }
     }
 }

@@ -10,6 +10,6 @@ SearchRequestHandler::$searchClasses[Emergence\Events\Event::class] = [
         ]
     ],
     'conditions' => [
-        'Status' => 'Published'
+        'Status' => 'published'
     ]
 ];
