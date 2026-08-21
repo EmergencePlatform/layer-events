@@ -48,7 +48,7 @@ class Event extends \ActiveRecord
     public static $relationships = [
         'Comments' => [
             'type' => 'context-children'
-            ,'class' => 'Comment'
+            ,'class' => \Emergence\Comments\Comment::class
             ,'order' => ['ID' => 'DESC']
         ]
     ];
